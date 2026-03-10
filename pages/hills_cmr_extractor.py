@@ -6,9 +6,9 @@ import streamlit as st
 from pypdf import PdfReader, PdfWriter
 
 
-st.set_page_config(page_title="PDF First Page Extractor", page_icon="📄", layout="centered")
+st.set_page_config(page_title="Hill's CMR Extractor", page_icon="📄", layout="centered")
 
-st.title("📄 PDF First Page Extractor")
+st.title("📄 Hill's CMR Extractor")
 st.write(
     "Upload one or more PDF files. The app will extract only the first page from each file and package the results into a ZIP for download."
 )
@@ -84,3 +84,4 @@ else:
 
 
 st.caption("Requires: streamlit, pypdf")
+
