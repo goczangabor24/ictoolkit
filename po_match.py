@@ -23,7 +23,7 @@ def extract_fc_po_month(path_text: str) -> tuple[str, str, str, str]:
     extra_info = ""
     if po_match:
         after_po = path_text[po_match.end():]
-        # Keresünk egy szóközt, majd kisbetűket
+        # Keresünk egy szóközt, majd kisbetűket (és szóközöket köztük)
         extra_match = re.search(r"^ ([a-z\s]+)", after_po)
         if extra_match:
             extra_info = extra_match.group(1).strip()
@@ -140,13 +140,13 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
         th { background: #f7f7f7; font-weight: 700; position: sticky; top: 0; z-index: 1; vertical-align: top; }
         .header-main { display: block; font-weight: 700; }
         .header-sub { display: block; margin-top: 2px; font-size: 12px; color: #666; font-weight: 400; }
-        td.dn-cell { cursor: pointer; user-select: none; }
-        td.dn-cell.selected { outline: 2px solid #1f77ff; outline-offset: -2px; background: #eaf2ff; }
+        td.dn-cell { cursor: pointer; user-select: none; transition: background 0.15s; }
+        td.dn-cell:hover { filter: brightness(0.95); }
         td.dn-cell.green { background: #c6efce !important; color: #006100; font-weight: 700; }
       </style>
     </head>
     <body>
-      <div class="hint"><strong>How to use:</strong> Click a cell, then press <strong>Ctrl + Enter</strong> to toggle green.</div>
+      <div class="hint"><strong>How to use:</strong> Click a cell to mark it as completed (green). Click again to undo.</div>
       <div class="table-wrap">
         <table id="dnTable"></table>
       </div>
@@ -194,9 +194,10 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
               if (val.startsWith('DN available')) {
                 td.classList.add('dn-cell');
                 td.dataset.fc = col;
+                // SIMA KATTINTÁS LOGIKA
                 td.onclick = () => {
-                  document.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
-                  td.classList.add('selected');
+                  td.classList.toggle('green');
+                  updateHeaderCounts();
                 };
               }
               tr.appendChild(td);
@@ -207,12 +208,6 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
           updateHeaderCounts();
         }
 
-        document.onkeydown = (e) => {
-          if (e.ctrlKey && e.key === 'Enter') {
-            const sel = document.querySelector('.selected');
-            if (sel) { sel.classList.toggle('green'); updateHeaderCounts(); }
-          }
-        };
         buildTable();
       </script>
     </body>
@@ -222,8 +217,8 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
     components.html(html_block, height=600, scrolling=True)
 
 
-st.set_page_config(page_title="🐶 PO Match", page_icon="📋", layout="wide")
-st.title("🐶 PO Match")
+st.set_page_config(page_title="PO Collector", page_icon="📋", layout="wide")
+st.title("PO Collector")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -255,7 +250,6 @@ else:
     if not vim_df.empty:
         csv_parts.append("VIM\n" + vim_df.to_csv(index=False))
     
-    # JAVÍTOTT RÉSZ: a \n karakter most már helyesen, egy sorban van a stringgel
     csv_data = ("\n".join(csv_parts)).encode("utf-8")
 
     st.download_button(
@@ -264,4 +258,3 @@ else:
         file_name="po_dn_status_by_fc.csv",
         mime="text/csv",
     )
-
