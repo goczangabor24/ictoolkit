@@ -341,8 +341,7 @@ else:
         csv_parts.append("INSIDER\n" + insider_df.to_csv(index=False))
     if not vim_df.empty:
         csv_parts.append("VIM\n" + vim_df.to_csv(index=False))
-    csv_data = ("
-".join(csv_parts)).encode("utf-8")
+    csv_data = ("".join(csv_parts)).encode("utf-8")
 
     st.download_button(
         label="Download CSV",
@@ -350,3 +349,4 @@ else:
         file_name="po_dn_status_by_fc.csv",
         mime="text/csv",
     )
+
