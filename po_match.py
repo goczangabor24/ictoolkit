@@ -293,9 +293,9 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
     components.html(html_block, height=600, scrolling=True)
 
 
-st.set_page_config(page_title="PO Match", page_icon="📋", layout="wide")
+st.set_page_config(page_title="🐶 PO Match", page_icon="📋", layout="wide")
 
-st.title("PO Match")
+st.title("🐶 PO Match")
 
 col1, col2 = st.columns(2)
 
@@ -349,5 +349,6 @@ else:
         file_name="po_dn_status_by_fc.csv",
         mime="text/csv",
     )
+
 
 
