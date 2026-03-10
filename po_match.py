@@ -103,7 +103,6 @@ def build_result_dataframe(insider_text: str, vim_text: str, paths_text: str) ->
     insider_df = pd.DataFrame(insider_rows, columns=columns)
     vim_df = pd.DataFrame(vim_rows, columns=columns)
 
-    # keep only rows where there is at least one DN match
     fc_columns = sorted_fcs
     if fc_columns:
         insider_df = insider_df[insider_df[fc_columns].replace("", pd.NA).notna().any(axis=1)]
@@ -181,21 +180,20 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
         td.dn-cell {
           cursor: pointer;
           user-select: none;
+          transition: background 0.2s;
         }
-        td.dn-cell.selected {
-          outline: 2px solid #1f77ff;
-          outline-offset: -2px;
-          background: #eaf2ff;
+        td.dn-cell:hover {
+          filter: brightness(0.95);
         }
         td.dn-cell.green {
-          background: #c6efce;
+          background: #c6efce !important;
           color: #006100;
           font-weight: 700;
         }
       </style>
     </head>
     <body>
-      <div class="hint"><strong>How to use:</strong> click one <em>DN available</em> cell to select it, then press <strong>Ctrl + Enter</strong> to toggle green.</div>
+      <div class="hint"><strong>How to use:</strong> Click a <em>DN available</em> cell to mark it as completed (green). Click again to undo.</div>
       <div class="table-wrap">
         <table id="dnTable"></table>
       </div>
@@ -259,9 +257,10 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
               if (value.startsWith('DN available')) {
                 td.classList.add('dn-cell');
                 td.dataset.fc = col;
+                // KATTINTÁS ESEMÉNY: átváltja a színt és frissíti a fejlécet
                 td.addEventListener('click', () => {
-                  document.querySelectorAll('td.dn-cell.selected').forEach(c => c.classList.remove('selected'));
-                  td.classList.add('selected');
+                  td.classList.toggle('green');
+                  updateHeaderCounts();
                 });
               }
 
@@ -272,16 +271,6 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
           table.appendChild(tbody);
           updateHeaderCounts();
         }
-
-        document.addEventListener('keydown', (event) => {
-          if (event.ctrlKey && event.key === 'Enter') {
-            event.preventDefault();
-            const cell = document.querySelector('td.dn-cell.selected');
-            if (!cell) return;
-            cell.classList.toggle('green');
-            updateHeaderCounts();
-          }
-        });
 
         buildTable();
       </script>
@@ -349,6 +338,3 @@ else:
         file_name="po_dn_status_by_fc.csv",
         mime="text/csv",
     )
-
-
-
