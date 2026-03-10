@@ -3,10 +3,20 @@ import zipfile
 from pathlib import Path
 
 import streamlit as st
+
+# --- helper functions ---
+def sanitize_name(filename: str) -> str:
+    stem = Path(filename).stem
+    safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in stem).strip("_")
+    return safe or "document"
+
+
 from pypdf import PdfReader, PdfWriter
 
 
-st.set_page_config(page_title="Hill's CMR Extractor", page_icon="🐶", layout="centered")
+
+
+st.set_page_config(page_title="🐶 Hill's CMR Extractor", page_icon="📄", layout="centered")
 
 st.title("🐶 Hill's CMR Extractor")
 st.write(
@@ -18,6 +28,34 @@ uploaded_files = st.file_uploader(
     type=["pdf"],
     accept_multiple_files=True,
 )
+
+suffix_values: dict[str, str] = {}
+
+if uploaded_files:
+    st.subheader("Output filename suffixes")
+    st.write("Add an optional suffix for each extracted PDF. Leave blank to keep the original filename.")
+
+    header_cols = st.columns([3, 2])
+    header_cols[0].markdown("**PDF name**")
+    header_cols[1].markdown("**Suffix**")
+
+    for i, uploaded_file in enumerate(uploaded_files):
+        key = f"suffix_{sanitize_name(uploaded_file.name)}_{i}"
+        cols = st.columns([3, 2])
+        cols[0].text_input(
+            "PDF name",
+            value=uploaded_file.name,
+            disabled=True,
+            key=f"name_{i}",
+            label_visibility="collapsed",
+        )
+        suffix_values[key] = cols[1].text_input(
+            "Suffix",
+            value="",
+            key=key,
+            placeholder="e.g. _processed",
+            label_visibility="collapsed",
+        )
 
 
 def sanitize_name(filename: str) -> str:
@@ -47,7 +85,11 @@ if uploaded_files:
                 writer.write(output_buffer)
                 output_buffer.seek(0)
 
-                output_name = f"{sanitize_name(uploaded_file.name)}_first_page.pdf"
+                suffix_key = f"suffix_{sanitize_name(uploaded_file.name)}_{uploaded_files.index(uploaded_file)}"
+                suffix = suffix_values.get(suffix_key, "").strip()
+                original_stem = Path(uploaded_file.name).stem
+                final_stem = f"{original_stem}_{suffix}" if suffix else original_stem
+                output_name = f"{sanitize_name(final_stem)}.pdf"
                 extracted_items.append((output_name, output_buffer.getvalue()))
 
             except Exception as e:
@@ -84,5 +126,3 @@ else:
 
 
 st.caption("Requires: streamlit, pypdf")
-
-
