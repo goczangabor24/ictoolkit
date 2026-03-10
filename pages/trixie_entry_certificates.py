@@ -5,6 +5,7 @@ import re
 import pandas as pd
 import streamlit.components.v1 as components
 import io
+from datetime import datetime
 
 # 1. Setup
 st.set_page_config(page_title="Zooplus - Trixie Entry Certificates", layout="wide")
@@ -129,9 +130,9 @@ def style_results_table(df_display):
 
 def add_labels_to_pdf(pdf_bytes, results):
     """
-    Megkeresi a PO számokat, és kettébontja a TO_COPY értéket:
-    - Az FC kód (pl. KRO) fixen a 380-es X koordinátára kerül.
-    - A dátum (pl. 09-2025) a lap jobb széléhez igazodik.
+    1) Beírja az aktuális dátumot az Ausstellungsdatum alá (Wien, dátum).
+    2) Az FC kódokat az Ort/Place/Lieu alá igazítja (fix 380-es X koordináta).
+    3) A hónapot a jobb szélre igazítja.
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
@@ -141,10 +142,9 @@ def add_labels_to_pdf(pdf_bytes, results):
     font_size = 11
     y_offset = -3
     
-    # Fix X koordináta az FC kódhoz (Ort/Place/Lieu alá)
-    fc_x_position = 380
-    # Margó a dátumhoz a jobb széltől
-    right_margin = 85
+    # Mai dátum előkészítése
+    today_str = datetime.now().strftime("%d.%m.%Y")
+    date_text = f"Wien, {today_str}"
 
     po_map = {
         str(row["PO Number"]): str(row["TO_COPY"])
@@ -152,34 +152,46 @@ def add_labels_to_pdf(pdf_bytes, results):
         if str(row["TO_COPY"]).strip().lower() != "missing"
     }
 
-    for po, label in po_map.items():
-        found_any = False
+    for page in doc:
+        # --- 1. Aktuális dátum beírása az Ausstellungsdatum alá ---
+        date_rects = page.search_for("Ausstellungsdatum")
+        if date_rects:
+            r_date = date_rects[0]
+            # A felirat alá 18 egységgel (mint a beküldött kódodban)
+            page.insert_text(
+                (r_date.x0, r_date.y1 + 18),
+                date_text,
+                fontsize=11,
+                fontname="helv",
+                color=(0, 0, 0)
+            )
 
-        for page in doc:
+        # --- 2. Táblázat sorainak kitöltése ---
+        for po, label in po_map.items():
             rects = page.search_for(po)
 
             if rects:
                 r = rects[0]
                 y = r.y1 + y_offset
 
-                # Szöveg szétbontása: "KRO 09-2025" -> "KRO" és "09-2025"
+                # Szétválasztás: "KRO 09-2025" -> "KRO" és "09-2025"
                 parts = label.split(" ")
                 fc_code = parts[0] if len(parts) > 0 else ""
                 date_val = parts[1] if len(parts) > 1 else ""
 
-                # 1. FC kód beírása a fix helyre
+                # FC kód beírása (fix 380-es pozíció)
                 page.insert_text(
-                    (fc_x_position, y),
+                    (380, y),
                     fc_code,
                     fontsize=font_size,
                     fontname="helv",
                     color=(0, 0, 0)
                 )
 
-                # 2. Dátum beírása a jobb szélre igazítva
+                # Dátum beírása (jobb szélre igazítva)
                 if date_val:
                     date_width = fitz.get_text_length(date_val, fontname="helv", fontsize=font_size)
-                    x_date = page.rect.x1 - right_margin - date_width
+                    x_date = page.rect.x1 - 85 - date_width
                     
                     page.insert_text(
                         (x_date, y),
@@ -190,11 +202,7 @@ def add_labels_to_pdf(pdf_bytes, results):
                     )
 
                 inserted_count += 1
-                found_any = True
-                break
-
-        if not found_any:
-            not_found.append(po)
+                # Nem törünk ki a belső ciklusból, ha egy lapon többször is szerepelhet a PO
 
     output_bytes = doc.tobytes()
     doc.close()
@@ -209,13 +217,11 @@ pdf_file = st.file_uploader("Upload PDF to extract PO numbers", type=["pdf"])
 if pdf_file is not None:
     try:
         pdf_bytes = pdf_file.read()
-
         pos = extract_po_numbers_from_pdf(pdf_bytes)
 
         if pos:
-            st.success(f"Extracted {len(pos)} PO numbers in document order.")
-            st.subheader("🔗 Copy & Paste to search bar")
-
+            st.success(f"Extracted {len(pos)} PO numbers.")
+            
             oder_text = " ODER ".join(pos)
             or_text = " OR ".join(pos)
 
@@ -223,60 +229,30 @@ if pdf_file is not None:
             with c1:
                 st.text_area("German Windows:", value=oder_text, height=100)
                 copy_button("German String", oder_text)
-
             with c2:
                 st.text_area("English Windows:", value=or_text, height=100)
                 copy_button("English String", or_text)
 
-            # --- STEP 2: PATHS ---
             st.divider()
-            st.subheader("2. Copy with Ctrl + Shift + C and paste paths then press Ctrl + Enter to get the results")
-            path_input = st.text_area("Paste the list of paths here (one per line):", height=150)
+            st.subheader("2. Paste paths")
+            path_input = st.text_area("Paste paths here (one per line):", height=150)
 
             lines = path_input.split("\n")
-            clean_p = []
-            for line in lines:
-                path_item = line.strip().replace('"', "")
-                if path_item:
-                    clean_p.append(path_item)
+            clean_p = [line.strip().replace('"', "") for line in lines if line.strip()]
 
             results = build_results(pos, clean_p)
 
-            # --- RESULTS ---
             st.subheader("📋 Final Results")
-            df = pd.DataFrame(results)
-            df_display = df[["PO Number", "TO_COPY"]].copy()
+            df_display = pd.DataFrame(results)[["PO Number", "TO_COPY"]]
+            st.dataframe(style_results_table(df_display), use_container_width=True, hide_index=True)
 
-            st.dataframe(
-                style_results_table(df_display),
-                use_container_width=True,
-                hide_index=True
-            )
-
-            csv = df_display.to_csv(index=False, sep=";").encode("utf-8-sig")
-            st.download_button(
-                "📥 Download Results CSV",
-                data=csv,
-                # Fix: CSV download button labels
-                file_name="trixie_results.csv",
-                mime="text/csv"
-            )
-
-            # --- PDF WRITING SECTION ---
+            # --- STEP 3: GENERATE ---
             st.divider()
             st.subheader("3. Generate annotated PDF")
 
             if st.button("✍️ Create modified PDF"):
-                modified_pdf_bytes, inserted_count, not_found = add_labels_to_pdf(
-                    pdf_bytes,
-                    results
-                )
-
-                st.success(f"Done. Inserted {inserted_count} labels into the PDF.")
-
-                if not_found:
-                    st.warning("These PO numbers were not found in the PDF search step:")
-                    st.write(", ".join(not_found))
+                modified_pdf_bytes, inserted_count, not_found = add_labels_to_pdf(pdf_bytes, results)
+                st.success(f"Done. Annotated {inserted_count} positions.")
 
                 original_name = pdf_file.name.rsplit(".", 1)[0]
                 st.download_button(
@@ -285,11 +261,7 @@ if pdf_file is not None:
                     file_name=f"{original_name}_annotated.pdf",
                     mime="application/pdf"
                 )
-
         else:
-            st.warning("No PO numbers matching criteria were found in the PDF.")
-
+            st.warning("No PO numbers found.")
     except Exception as e:
         st.error(f"Error: {e}")
-
-
