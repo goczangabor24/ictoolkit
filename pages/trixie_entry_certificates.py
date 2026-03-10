@@ -142,7 +142,7 @@ def add_labels_to_pdf(pdf_bytes, results):
     y_offset = -3
     
     # Fix X koordináta az FC kódhoz (Ort/Place/Lieu alá)
-    fc_x_position = 450
+    fc_x_position = 400
     # Margó a dátumhoz a jobb széltől
     right_margin = 85
 
@@ -291,3 +291,4 @@ if pdf_file is not None:
 
     except Exception as e:
         st.error(f"Error: {e}")
+
