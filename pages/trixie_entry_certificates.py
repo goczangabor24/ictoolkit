@@ -129,9 +129,9 @@ def style_results_table(df_display):
 
 def add_labels_to_pdf(pdf_bytes, results):
     """
-    Megkeresi az egyes PO számokat a PDF-ben, és a TO_COPY értéket
-    a lap jobb széléhez igazítva írja be fix oszlopba.
-    Missing esetén kihagyja.
+    Megkeresi a PO számokat, és kettébontja a TO_COPY értéket:
+    - Az FC kód (pl. KRO) fixen a 450-es X koordinátára kerül.
+    - A dátum (pl. 09-2025) a lap jobb széléhez igazodik.
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
@@ -140,8 +140,10 @@ def add_labels_to_pdf(pdf_bytes, results):
 
     font_size = 11
     y_offset = -3
-
-    # Jobb margó: ettől a távolságtól beljebb legyen a szöveg jobb széle
+    
+    # Fix X koordináta az FC kódhoz (Ort/Place/Lieu alá)
+    fc_x_position = 450
+    # Margó a dátumhoz a jobb széltől
     right_margin = 85
 
     po_map = {
@@ -158,30 +160,34 @@ def add_labels_to_pdf(pdf_bytes, results):
 
             if rects:
                 r = rects[0]
-
-                # Szöveg szélességének becslése
-                text_width = fitz.get_text_length(label, fontname="helv", fontsize=font_size)
-
-                # Fix oszlop a lap jobb széléhez igazítva
-                x = page.rect.x1 - right_margin - text_width
                 y = r.y1 + y_offset
 
-                text_height = font_size + 5
-                bg_rect = fitz.Rect(
-                    x - 2,
-                    r.y0 - 1,
-                    x + text_width + 2,
-                    r.y0 + text_height
-                )
+                # Szöveg szétbontása: "KRO 09-2025" -> "KRO" és "09-2025"
+                parts = label.split(" ")
+                fc_code = parts[0] if len(parts) > 0 else ""
+                date_val = parts[1] if len(parts) > 1 else ""
 
-                page.draw_rect(bg_rect, color=None, fill=(1, 1, 1))
+                # 1. FC kód beírása a fix helyre
                 page.insert_text(
-                    (x, y),
-                    label,
+                    (fc_x_position, y),
+                    fc_code,
                     fontsize=font_size,
                     fontname="helv",
                     color=(0, 0, 0)
                 )
+
+                # 2. Dátum beírása a jobb szélre igazítva
+                if date_val:
+                    date_width = fitz.get_text_length(date_val, fontname="helv", fontsize=font_size)
+                    x_date = page.rect.x1 - right_margin - date_width
+                    
+                    page.insert_text(
+                        (x_date, y),
+                        date_val,
+                        fontsize=font_size,
+                        fontname="helv",
+                        color=(0, 0, 0)
+                    )
 
                 inserted_count += 1
                 found_any = True
@@ -251,6 +257,7 @@ if pdf_file is not None:
             st.download_button(
                 "📥 Download Results CSV",
                 data=csv,
+                # Fix: CSV download button labels
                 file_name="trixie_results.csv",
                 mime="text/csv"
             )
