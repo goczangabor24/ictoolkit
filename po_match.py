@@ -12,26 +12,29 @@ def normalize_po_list(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
-def extract_fc_po_month(path_text: str) -> tuple[str, str, str]:
+def extract_fc_po_month(path_text: str) -> tuple[str, str, str, str]:
     fc_match = re.search(r"\b([A-Z]{3})\b", path_text)
     fc = fc_match.group(1) if fc_match else ""
 
     po_match = re.search(r"\b(1\d{6}|4\d{9})\b", path_text)
     po = po_match.group(1) if po_match else ""
 
+    # Extra infó keresése a PO után (szóköz + kisbetűk)
+    extra_info = ""
+    if po_match:
+        after_po = path_text[po_match.end():]
+        # Keresünk egy szóközt, majd kisbetűket
+        extra_match = re.search(r"^ ([a-z\s]+)", after_po)
+        if extra_match:
+            extra_info = extra_match.group(1).strip()
+
     month = ""
     month_names = {
-        "january": "01", "jan": "01",
-        "february": "02", "feb": "02",
-        "march": "03", "mar": "03",
-        "april": "04", "apr": "04",
-        "may": "05",
-        "june": "06", "jun": "06",
-        "july": "07", "jul": "07",
-        "august": "08", "aug": "08",
-        "september": "09", "sep": "09", "sept": "09",
-        "october": "10", "oct": "10",
-        "november": "11", "nov": "11",
+        "january": "01", "jan": "01", "february": "02", "feb": "02",
+        "march": "03", "mar": "03", "april": "04", "apr": "04", "may": "05",
+        "june": "06", "jun": "06", "july": "07", "jul": "07", "august": "08",
+        "aug": "08", "september": "09", "sep": "09", "sept": "09",
+        "october": "10", "oct": "10", "november": "11", "nov": "11",
         "december": "12", "dec": "12",
     }
 
@@ -58,56 +61,54 @@ def extract_fc_po_month(path_text: str) -> tuple[str, str, str]:
                 month = month_names[month_name_match.group(1).lower()]
                 break
 
-    return fc, po, month
+    return fc, po, month, extra_info
 
 
 def build_result_dataframe(insider_text: str, vim_text: str, paths_text: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     insider_pos = normalize_po_list(insider_text)
     vim_pos = normalize_po_list(vim_text)
 
-    insider_rows: list[dict[str, str]] = [{"PO Number": po} for po in insider_pos]
-    vim_rows: list[dict[str, str]] = [{"PO Number": po} for po in vim_pos]
-
     path_lines = [line.strip().strip('"') for line in paths_text.splitlines() if line.strip()]
-    fc_po_map: dict[str, dict[str, str]] = {}
+    fc_po_map = {}
 
     for path_line in path_lines:
-        fc, po, month = extract_fc_po_month(path_line)
+        fc, po, month, extra = extract_fc_po_month(path_line)
         if not fc or not po:
             continue
         if fc not in fc_po_map:
             fc_po_map[fc] = {}
-        fc_po_map[fc][po] = month
+        fc_po_map[fc][po] = {"month": month, "extra": extra}
 
     sorted_fcs = sorted(fc_po_map.keys())
 
-    for row in insider_rows:
-        po = row["PO Number"]
-        for fc in sorted_fcs:
-            if po in fc_po_map[fc]:
-                month = fc_po_map[fc][po]
-                row[fc] = f"DN available in {month}" if month else "DN available"
-            else:
-                row[fc] = ""
+    def process_rows(pos_list):
+        rows = []
+        for po in pos_list:
+            row = {"PO Number": po}
+            for fc in sorted_fcs:
+                if po in fc_po_map[fc]:
+                    data = fc_po_map[fc][po]
+                    m = data["month"]
+                    e = data["extra"]
+                    val = f"DN available in {m}" if m else "DN available"
+                    if e:
+                        val += f" ({e})"
+                    row[fc] = val
+                else:
+                    row[fc] = ""
+            rows.append(row)
+        return rows
 
-    for row in vim_rows:
-        po = row["PO Number"]
-        for fc in sorted_fcs:
-            if po in fc_po_map[fc]:
-                month = fc_po_map[fc][po]
-                row[fc] = f"DN available in {month}" if month else "DN available"
-            else:
-                row[fc] = ""
+    insider_rows = process_rows(insider_pos)
+    vim_rows = process_rows(vim_pos)
 
     columns = ["PO Number"] + sorted_fcs
     insider_df = pd.DataFrame(insider_rows, columns=columns)
     vim_df = pd.DataFrame(vim_rows, columns=columns)
 
-    # keep only rows where there is at least one DN match
-    fc_columns = sorted_fcs
-    if fc_columns:
-        insider_df = insider_df[insider_df[fc_columns].replace("", pd.NA).notna().any(axis=1)]
-        vim_df = vim_df[vim_df[fc_columns].replace("", pd.NA).notna().any(axis=1)]
+    if sorted_fcs:
+        insider_df = insider_df[insider_df[sorted_fcs].replace("", pd.NA).notna().any(axis=1)]
+        vim_df = vim_df[vim_df[sorted_fcs].replace("", pd.NA).notna().any(axis=1)]
 
     return insider_df, vim_df
 
@@ -131,86 +132,30 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
     <head>
       <meta charset="utf-8" />
       <style>
-        body {
-          font-family: Arial, sans-serif;
-          margin: 0;
-          padding: 0.5rem;
-          background: white;
-        }
-        .hint {
-          margin: 0 0 12px 0;
-          font-size: 14px;
-          color: #333;
-        }
-        .table-wrap {
-          overflow-x: auto;
-          border: 1px solid #d9d9d9;
-          border-radius: 10px;
-        }
-        table {
-          border-collapse: collapse;
-          width: 100%;
-          min-width: 900px;
-        }
-        th, td {
-          border: 1px solid #e6e6e6;
-          padding: 8px 10px;
-          text-align: left;
-          white-space: nowrap;
-          font-size: 14px;
-        }
-        th {
-          background: #f7f7f7;
-          font-weight: 700;
-          position: sticky;
-          top: 0;
-          z-index: 1;
-          vertical-align: top;
-        }
-        .header-main {
-          display: block;
-          font-weight: 700;
-        }
-        .header-sub {
-          display: block;
-          margin-top: 2px;
-          font-size: 12px;
-          color: #666;
-          font-weight: 400;
-        }
-        td.dn-cell {
-          cursor: pointer;
-          user-select: none;
-        }
-        td.dn-cell.selected {
-          outline: 2px solid #1f77ff;
-          outline-offset: -2px;
-          background: #eaf2ff;
-        }
-        td.dn-cell.green {
-          background: #c6efce;
-          color: #006100;
-          font-weight: 700;
-        }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0.5rem; background: white; }
+        .hint { margin: 0 0 12px 0; font-size: 14px; color: #333; }
+        .table-wrap { overflow-x: auto; border: 1px solid #d9d9d9; border-radius: 10px; }
+        table { border-collapse: collapse; width: 100%; min-width: 900px; }
+        th, td { border: 1px solid #e6e6e6; padding: 8px 10px; text-align: left; white-space: nowrap; font-size: 14px; }
+        th { background: #f7f7f7; font-weight: 700; position: sticky; top: 0; z-index: 1; vertical-align: top; }
+        .header-main { display: block; font-weight: 700; }
+        .header-sub { display: block; margin-top: 2px; font-size: 12px; color: #666; font-weight: 400; }
+        td.dn-cell { cursor: pointer; user-select: none; }
+        td.dn-cell.selected { outline: 2px solid #1f77ff; outline-offset: -2px; background: #eaf2ff; }
+        td.dn-cell.green { background: #c6efce !important; color: #006100; font-weight: 700; }
       </style>
     </head>
     <body>
-      <div class="hint"><strong>How to use:</strong> click one <em>DN available</em> cell to select it, then press <strong>Ctrl + Enter</strong> to toggle green.</div>
+      <div class="hint"><strong>How to use:</strong> Click a cell, then press <strong>Ctrl + Enter</strong> to toggle green.</div>
       <div class="table-wrap">
         <table id="dnTable"></table>
       </div>
-
       <script>
         const payload = __PAYLOAD_JSON__;
         const table = document.getElementById('dnTable');
 
         function escapeHtml(value) {
-          return String(value)
-            .replaceAll('&', '&amp;')
-            .replaceAll('<', '&lt;')
-            .replaceAll('>', '&gt;')
-            .replaceAll('"', '&quot;')
-            .replaceAll("'", '&#039;');
+          return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
         }
 
         function updateHeaderCounts() {
@@ -229,42 +174,31 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
           payload.columns.forEach(col => {
             const th = document.createElement('th');
             th.dataset.col = col;
-
-            const main = document.createElement('span');
-            main.className = 'header-main';
-            main.innerHTML = escapeHtml(col);
-            th.appendChild(main);
-
+            th.innerHTML = `<span class="header-main">${escapeHtml(col)}</span>`;
             if (col !== 'PO Number') {
-              const sub = document.createElement('span');
-              sub.className = 'header-sub';
-              const total = Number(payload.match_totals[col] || 0);
-              sub.textContent = `0/${total} completed`;
-              th.appendChild(sub);
+              const total = payload.match_totals[col] || 0;
+              th.innerHTML += `<span class="header-sub">0/${total} completed</span>`;
             }
-
             headRow.appendChild(th);
           });
           thead.appendChild(headRow);
           table.appendChild(thead);
 
           const tbody = document.createElement('tbody');
-          payload.rows.forEach((row) => {
+          payload.rows.forEach(row => {
             const tr = document.createElement('tr');
-            payload.columns.forEach((col) => {
+            payload.columns.forEach(col => {
               const td = document.createElement('td');
-              const value = String(row[col] ?? '');
-              td.innerHTML = escapeHtml(value);
-
-              if (value.startsWith('DN available')) {
+              const val = String(row[col] || '');
+              td.innerHTML = escapeHtml(val);
+              if (val.startsWith('DN available')) {
                 td.classList.add('dn-cell');
                 td.dataset.fc = col;
-                td.addEventListener('click', () => {
-                  document.querySelectorAll('td.dn-cell.selected').forEach(c => c.classList.remove('selected'));
+                td.onclick = () => {
+                  document.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
                   td.classList.add('selected');
-                });
+                };
               }
-
               tr.appendChild(td);
             });
             tbody.appendChild(tr);
@@ -273,54 +207,34 @@ def render_interactive_dn_table(df: pd.DataFrame) -> None:
           updateHeaderCounts();
         }
 
-        document.addEventListener('keydown', (event) => {
-          if (event.ctrlKey && event.key === 'Enter') {
-            event.preventDefault();
-            const cell = document.querySelector('td.dn-cell.selected');
-            if (!cell) return;
-            cell.classList.toggle('green');
-            updateHeaderCounts();
+        document.onkeydown = (e) => {
+          if (e.ctrlKey && e.key === 'Enter') {
+            const sel = document.querySelector('.selected');
+            if (sel) { sel.classList.toggle('green'); updateHeaderCounts(); }
           }
-        });
-
+        };
         buildTable();
       </script>
     </body>
     </html>
     """
-
     html_block = html_block.replace("__PAYLOAD_JSON__", payload_json)
     components.html(html_block, height=600, scrolling=True)
 
 
 st.set_page_config(page_title="PO Collector", page_icon="📋", layout="wide")
-
 st.title("PO Collector")
 
 col1, col2 = st.columns(2)
-
 with col1:
     st.markdown("## **INSIDER**")
-    insider_input = st.text_area(
-        "Paste Insider PO numbers (one per line)",
-        height=220,
-        placeholder="1700001\n1700002\n4000000001",
-    )
-
+    insider_input = st.text_area("Paste Insider PO numbers", height=220)
 with col2:
     st.markdown("## **VIM**")
-    vim_input = st.text_area(
-        "Paste VIM PO numbers (one per line)",
-        height=220,
-        placeholder="1701001\n1701002\n4000000002",
-    )
+    vim_input = st.text_area("Paste VIM PO numbers", height=220)
 
 st.markdown("## **FILE PATHS**")
-paths_input = st.text_area(
-    "Paste file paths (one per line)",
-    height=220,
-    placeholder='"C:\\Users\\zp3539\\Zooplus SE\\ORY - collaboration site - ORY 2026\\ORY 03\\PO 1670529 GEORGIAN.pdf"',
-)
+paths_input = st.text_area("Paste file paths", height=220)
 
 insider_df, vim_df = build_result_dataframe(insider_input, vim_input, paths_input)
 
@@ -331,7 +245,6 @@ else:
     if not insider_df.empty:
         st.markdown("### **INSIDER**")
         render_interactive_dn_table(insider_df)
-
     if not vim_df.empty:
         st.markdown("### **VIM**")
         render_interactive_dn_table(vim_df)
@@ -341,8 +254,9 @@ else:
         csv_parts.append("INSIDER\n" + insider_df.to_csv(index=False))
     if not vim_df.empty:
         csv_parts.append("VIM\n" + vim_df.to_csv(index=False))
-    csv_data = ("
-".join(csv_parts)).encode("utf-8")
+    
+    # JAVÍTOTT RÉSZ: a \n karakter most már helyesen, egy sorban van a stringgel
+    csv_data = ("\n".join(csv_parts)).encode("utf-8")
 
     st.download_button(
         label="Download CSV",
