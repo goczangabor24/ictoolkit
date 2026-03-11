@@ -35,7 +35,7 @@ if uploaded_files:
     st.subheader("Output filename suffixes")
     header_cols = st.columns([3, 2])
     header_cols[0].markdown("**Original PDF name**")
-    header_cols[1].markdown("**Suffix (Required)**")
+    header_cols[1].markdown("**Suffix (Optional)**")
 
     for i, uploaded_file in enumerate(uploaded_files):
         clean_base = sanitize_name(uploaded_file.name)
@@ -49,16 +49,23 @@ if uploaded_files:
 
     st.divider()
 
-    # --- Processing with validation ---
-    if st.button("🚀 Process & Prepare All-in-One ZIP", use_container_width=True):
-        # 1. Validation: Check if all suffix fields are filled
-        empty_suffixes = [key for key, val in suffix_values.items() if not val.strip()]
-        
-        if empty_suffixes:
-            st.error("⚠️ **Validation Error:** Please fill in all suffix fields before processing!")
-            st.stop()  # Stops execution here, won't generate the ZIP
-        
-        # 2. If validation passes, start processing
+    # --- Validation Logic ---
+    empty_suffixes = [key for key, val in suffix_values.items() if not val.strip()]
+    
+    col_btn1, col_btn2 = st.columns([1, 1])
+    
+    start_processing = False
+    
+    if empty_suffixes:
+        st.warning(f"⚠️ **Note:** {len(empty_suffixes)} suffix field(s) are empty. These files will use their original names.")
+        if st.button("🚀 Process Anyway", use_container_width=True, type="secondary"):
+            start_processing = True
+    else:
+        if st.button("🚀 Process & Prepare ZIP", use_container_width=True, type="primary"):
+            start_processing = True
+
+    # --- Processing ---
+    if start_processing:
         extracted_items = []      
         original_files_data = []  
         skipped_files = []
@@ -93,7 +100,7 @@ if uploaded_files:
                     skipped_files.append(f"{uploaded_file.name} (Error: {e})")
 
         if extracted_items:
-            # --- Generate Email Message (with Base64 fix) ---
+            # --- Generate Email Message (Base64 Fix) ---
             msg = EmailMessage()
             msg["Subject"] = "Hill's Delivery Notes"
             msg["To"] = ""  
@@ -103,7 +110,7 @@ if uploaded_files:
             body_text = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
             msg.set_content(body_text)
             
-            # Force Base64 encoding for the text part to prevent "inv=oice" issues
+            # Final fix for encoding
             for part in msg.walk():
                 if part.get_content_maintype() == 'text':
                     part.replace_header('Content-Transfer-Encoding', 'base64')
@@ -131,7 +138,7 @@ if uploaded_files:
             st.success("Processing complete!")
             
             st.download_button(
-                label="📥 Download ZIP",
+                label="📥 Download ZIP Package",
                 data=final_zip_buffer.getvalue(),
                 file_name="hills_package.zip",
                 mime="application/zip",
