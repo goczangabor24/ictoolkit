@@ -1,128 +1,159 @@
 import io
 import zipfile
 from pathlib import Path
-
 import streamlit as st
+from pypdf import PdfReader, PdfWriter
+from email.message import EmailMessage
 
-# --- helper functions ---
+# --- Segédfüggvény a fájlnevek tisztításához ---
 def sanitize_name(filename: str) -> str:
     stem = Path(filename).stem
+    # Csak betűk, számok, kötőjel és alulvonás maradjon
     safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in stem).strip("_")
     return safe or "document"
 
-
-from pypdf import PdfReader, PdfWriter
-
-
-
-
+# --- Oldal beállítása ---
 st.set_page_config(page_title="🐶 Hill's CMR Extractor", page_icon="📄", layout="centered")
 
 st.title("🐶 Hill's CMR Extractor")
 st.write(
-    "Upload one or more PDF files. The app will extract only the first page from each file and package the results into a ZIP for download."
+    "Töltsd fel a PDF-eket! Az app kivonatolja az első oldalakat egy ZIP-be, "
+    "és generál egy Outlook e-mail tervezetet az eredeti fájlokkal."
 )
 
+# --- Fájl feltöltés ---
 uploaded_files = st.file_uploader(
-    "Upload PDF files",
+    "Válaszd ki a PDF fájlokat",
     type=["pdf"],
     accept_multiple_files=True,
 )
 
-suffix_values: dict[str, str] = {}
-
 if uploaded_files:
-    st.subheader("Output filename suffixes")
-    st.write("Add an optional suffix for each extracted PDF. Leave blank to keep the original filename.")
+    suffix_values: dict[str, str] = {}
+    
+    st.subheader("Fájlnév utótagok (Suffix)")
+    st.info("Itt adhatsz hozzá extra nevet a kivonatolt PDF-ekhez. Az e-mailben az eredeti nevek maradnak.")
 
+    # Táblázatszerű elrendezés a suffixeknek
     header_cols = st.columns([3, 2])
-    header_cols[0].markdown("**PDF name**")
-    header_cols[1].markdown("**Suffix**")
+    header_cols[0].markdown("**Eredeti fájlnév**")
+    header_cols[1].markdown("**Utótag (opcionális)**")
 
     for i, uploaded_file in enumerate(uploaded_files):
-        key = f"suffix_{sanitize_name(uploaded_file.name)}_{i}"
+        # Egyedi kulcs generálása a widgeteknek
+        clean_base = sanitize_name(uploaded_file.name)
+        key = f"suffix_{clean_base}_{i}"
+        
         cols = st.columns([3, 2])
-        cols[0].text_input(
-            "PDF name",
-            value=uploaded_file.name,
-            disabled=True,
-            key=f"name_{i}",
-            label_visibility="collapsed",
-        )
+        cols[0].text_input("Név", value=uploaded_file.name, disabled=True, key=f"name_{i}", label_visibility="collapsed")
         suffix_values[key] = cols[1].text_input(
-            "Suffix",
-            value="",
-            key=key,
-            placeholder="e.g. _processed",
-            label_visibility="collapsed",
+            "Suffix", 
+            value="", 
+            key=key, 
+            placeholder="pl. _v1", 
+            label_visibility="collapsed"
         )
 
+    st.divider()
 
-def sanitize_name(filename: str) -> str:
-    stem = Path(filename).stem
-    safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in stem).strip("_")
-    return safe or "document"
+    # --- Feldolgozás indítása ---
+    if st.button("🚀 Feldolgozás és letöltések előkészítése", use_container_width=True):
+        extracted_items = []      # Kivonatolt első oldalak (módosított névvel)
+        original_files_data = []  # Eredeti fájlok az e-mailhez
+        skipped_files = []
 
+        with st.spinner("Munka folyamatban..."):
+            for i, uploaded_file in enumerate(uploaded_files):
+                try:
+                    # Fájl tartalmának beolvasása
+                    file_bytes = uploaded_file.getvalue()
+                    original_files_data.append((uploaded_file.name, file_bytes))
+                    
+                    # PDF feldolgozás (első oldal kivágása)
+                    reader = PdfReader(io.BytesIO(file_bytes))
+                    
+                    if len(reader.pages) == 0:
+                        skipped_files.append(f"{uploaded_file.name} (üres)")
+                        continue
 
-if uploaded_files:
-    extracted_items: list[tuple[str, bytes]] = []
-    skipped_files: list[str] = []
+                    writer = PdfWriter()
+                    writer.add_page(reader.pages[0])
+                    
+                    out_pdf_buffer = io.BytesIO()
+                    writer.write(out_pdf_buffer)
+                    
+                    # Új fájlnév összeállítása a suffix-szel
+                    suffix_key = f"suffix_{sanitize_name(uploaded_file.name)}_{i}"
+                    user_suffix = suffix_values.get(suffix_key, "").strip()
+                    
+                    stem = Path(uploaded_file.name).stem
+                    final_stem = f"{stem}_{user_suffix}" if user_suffix else stem
+                    final_name = f"{sanitize_name(final_stem)}.pdf"
+                    
+                    extracted_items.append((final_name, out_pdf_buffer.getvalue()))
+                
+                except Exception as e:
+                    skipped_files.append(f"{uploaded_file.name} (Hiba: {e})")
 
-    with st.spinner("Processing PDFs..."):
-        for uploaded_file in uploaded_files:
-            try:
-                pdf_bytes = uploaded_file.read()
-                reader = PdfReader(io.BytesIO(pdf_bytes))
+        # --- Eredmények megjelenítése ---
+        if extracted_items:
+            st.success(f"Sikeresen feldolgozva: {len(extracted_items)} fájl.")
+            
+            col1, col2 = st.columns(2)
 
-                if len(reader.pages) == 0:
-                    skipped_files.append(f"{uploaded_file.name} (no pages)")
-                    continue
+            # 1. Kivonatolt ZIP letöltése
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for name, data in extracted_items:
+                    zf.writestr(name, data)
+            
+            col1.download_button(
+                label="📥 Kivonatolt PDF-ek (ZIP)",
+                data=zip_buffer.getvalue(),
+                file_name="hills_extracted_pages.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
 
-                writer = PdfWriter()
-                writer.add_page(reader.pages[0])
+            # 2. Outlook E-mail (.eml) generálása
+            msg = EmailMessage()
+            msg["Subject"] = "Hill's Delivery Notes"
+            msg["To"] = "" # Itt megadhatsz egy fix e-mail címet is
+            msg.set_content(
+                "Hello,\n\n"
+                "Please find the Hill's delivery notes attached, "
+                "please assign them to the invoices accordingly."
+            )
 
-                output_buffer = io.BytesIO()
-                writer.write(output_buffer)
-                output_buffer.seek(0)
+            for orig_name, orig_data in original_files_data:
+                msg.add_attachment(
+                    orig_data,
+                    maintype="application",
+                    subtype="pdf",
+                    filename=orig_name
+                )
 
-                suffix_key = f"suffix_{sanitize_name(uploaded_file.name)}_{uploaded_files.index(uploaded_file)}"
-                suffix = suffix_values.get(suffix_key, "").strip()
-                original_stem = Path(uploaded_file.name).stem
-                final_stem = f"{original_stem}_{suffix}" if suffix else original_stem
-                output_name = f"{sanitize_name(final_stem)}.pdf"
-                extracted_items.append((output_name, output_buffer.getvalue()))
+            col2.download_button(
+                label="📧 Outlook E-mail készítése",
+                data=msg.as_bytes(),
+                file_name="hills_delivery_email.eml",
+                mime="message/rfc822",
+                use_container_width=True,
+                help="Letölt egy .eml fájlt, amit az Outlookban megnyitva azonnal küldhetsz."
+            )
 
-            except Exception as e:
-                skipped_files.append(f"{uploaded_file.name} ({e})")
+            # Lista a feldolgozott fájlokról
+            with st.expander("Megnézem a generált fájlneveket"):
+                for name, _ in extracted_items:
+                    st.write(f"✅ {name}")
 
-    if extracted_items:
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for output_name, file_bytes in extracted_items:
-                zf.writestr(output_name, file_bytes)
-
-        zip_buffer.seek(0)
-
-        st.success(f"Done. Extracted first pages from {len(extracted_items)} PDF file(s).")
-
-        st.download_button(
-            label="Download ZIP",
-            data=zip_buffer.getvalue(),
-            file_name="first_pages.zip",
-            mime="application/zip",
-        )
-
-        with st.expander("Processed files"):
-            for output_name, _ in extracted_items:
-                st.write(f"- {output_name}")
-
-    if skipped_files:
-        st.warning("Some files could not be processed:")
-        for item in skipped_files:
-            st.write(f"- {item}")
+        if skipped_files:
+            st.warning("Néhány fájlt nem sikerült feldolgozni:")
+            for skip in skipped_files:
+                st.write(f"- {skip}")
 
 else:
-    st.info("Upload one or more PDF files to begin.")
+    st.info("Kérlek, tölts fel legalább egy PDF fájlt a kezdéshez.")
 
-
-st.caption("Requires: streamlit, pypdf")
+st.divider()
+st.caption("Használt könyvtárak: streamlit, pypdf | Formátum: RFC822 (Outlook kompatibilis)")
