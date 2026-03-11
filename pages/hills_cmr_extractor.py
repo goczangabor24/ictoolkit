@@ -17,7 +17,7 @@ st.set_page_config(page_title="🐶 Hill's CMR Extractor", page_icon="📄", lay
 st.title("🐶 Hill's CMR Extractor")
 st.write(
     "Upload PDF files. The app will extract the first pages into a ZIP file "
-    "and include a ready-to-send Outlook email draft with the original files attached."
+    "and include an **editable** Outlook email draft with original files attached."
 )
 
 # --- File uploader ---
@@ -31,8 +31,6 @@ if uploaded_files:
     suffix_values: dict[str, str] = {}
     
     st.subheader("Output filename suffixes")
-    st.info("Add an optional suffix for extracted pages. The email draft will use original filenames.")
-
     header_cols = st.columns([3, 2])
     header_cols[0].markdown("**Original PDF name**")
     header_cols[1].markdown("**Suffix (optional)**")
@@ -44,19 +42,15 @@ if uploaded_files:
         cols = st.columns([3, 2])
         cols[0].text_input("Name", value=uploaded_file.name, disabled=True, key=f"name_{i}", label_visibility="collapsed")
         suffix_values[key] = cols[1].text_input(
-            "Suffix", 
-            value="", 
-            key=key, 
-            placeholder="e.g. _extract", 
-            label_visibility="collapsed"
+            "Suffix", value="", key=key, placeholder="e.g. _extract", label_visibility="collapsed"
         )
 
     st.divider()
 
     # --- Processing ---
     if st.button("🚀 Process & Prepare All-in-One ZIP", use_container_width=True):
-        extracted_items = []      # Processed first pages
-        original_files_data = []  # Original files for the email
+        extracted_items = []      
+        original_files_data = []  
         skipped_files = []
 
         with st.spinner("Processing documents..."):
@@ -89,15 +83,15 @@ if uploaded_files:
                     skipped_files.append(f"{uploaded_file.name} (Error: {e})")
 
         if extracted_items:
-            # --- Generate Email Message ---
+            # --- Generate EDITABLE Email Message ---
             msg = EmailMessage()
             msg["Subject"] = "Hill's Delivery Notes"
-            msg["To"] = "" 
-            msg.set_content(
-                "Hello,\n\n"
-                "Please find the Hill's delivery notes attached, "
-                "please assign them to the invoices accordingly."
-            )
+            msg["To"] = ""  # You can add a default email here
+            # This header tells Outlook it's a draft
+            msg["X-Unsent"] = "1"
+            
+            body = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
+            msg.set_content(body, charset='utf-8')
 
             for orig_name, orig_data in original_files_data:
                 msg.add_attachment(
@@ -107,42 +101,30 @@ if uploaded_files:
                     filename=orig_name
                 )
             
-            email_bytes = msg.as_bytes()
+            # Use policy to ensure proper line endings and avoid "inv=ices" style encoding
+            email_bytes = msg.as_bytes(policy=msg.policy.clone(cte_type='8bit'))
 
-            # --- Create final ZIP containing both PDFs and the Email Draft ---
+            # --- Create final ZIP ---
             final_zip_buffer = io.BytesIO()
             with zipfile.ZipFile(final_zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-                # Add the email draft to the root of the ZIP
                 zf.writestr("hills_delivery_email.eml", email_bytes)
-                
-                # Add the extracted PDFs
                 for name, data in extracted_items:
                     zf.writestr(f"extracted_pages/{name}", data)
 
             st.success("Processing complete!")
             
             st.download_button(
-                label="📥 Download ZIP (PDFs + Email Draft)",
+                label="📥 Download ZIP (PDFs + Editable Email)",
                 data=final_zip_buffer.getvalue(),
                 file_name="hills_package.zip",
                 mime="application/zip",
-                use_container_width=True,
-                help="This ZIP contains the extracted PDFs and the editable Outlook email draft."
+                use_container_width=True
             )
 
-            with st.expander("Show processed files"):
-                st.write("**Email Draft:** `hills_delivery_email.eml` (includes original files)")
-                st.write("**Extracted Pages:**")
-                for name, _ in extracted_items:
-                    st.write(f"- {name}")
-
         if skipped_files:
-            st.warning("The following files could not be processed:")
+            st.warning("Skipped files:")
             for skip in skipped_files:
                 st.write(f"- {skip}")
 
 else:
     st.info("Please upload PDF files to start.")
-
-st.divider()
-st.caption("Requirements: streamlit, pypdf | Format: RFC822 (Outlook Compatible)")
