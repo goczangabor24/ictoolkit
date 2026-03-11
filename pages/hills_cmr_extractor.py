@@ -5,6 +5,7 @@ import streamlit as st
 from pypdf import PdfReader, PdfWriter
 from email.message import EmailMessage
 from email.utils import formatdate
+from email import encoders
 
 # --- Helper function for filename sanitization ---
 def sanitize_name(filename: str) -> str:
@@ -83,25 +84,23 @@ if uploaded_files:
                     skipped_files.append(f"{uploaded_file.name} (Error: {e})")
 
         if extracted_items:
-            # --- Generate ROBUST Email Message ---
+            # --- Generate Robust Email Message ---
             msg = EmailMessage()
             msg["Subject"] = "Hill's Delivery Notes"
             msg["To"] = ""  
             msg["Date"] = formatdate(localtime=True)
-            msg["X-Unsent"] = "1" # Ensures Edit Mode in Outlook
+            msg["X-Unsent"] = "1" 
             
-            # Use HTML to force Outlook to render characters correctly
-            html_body = """
-            <html>
-            <body>
-                <p>Hello,</p>
-                <p>Please find the Hill's delivery notes attached, please assign them to the invoices accordingly.</p>
-            </body>
-            </html>
-            """
-            msg.set_content("Please open this email in an HTML-compatible viewer.") # Fallback text
-            msg.add_alternative(html_body, subtype='html')
+            # The Text Body
+            body_text = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
+            msg.set_content(body_text)
+            
+            # FORCE Base64 encoding for the body to prevent "ass=gn" issues
+            for part in msg.walk():
+                if part.get_content_maintype() == 'text':
+                    encoders.encode_base64(part)
 
+            # Attachments
             for orig_name, orig_data in original_files_data:
                 msg.add_attachment(
                     orig_data,
@@ -110,8 +109,7 @@ if uploaded_files:
                     filename=orig_name
                 )
             
-            # Export with policy that avoids the "=" signs (quoted-printable)
-            email_bytes = msg.as_bytes(policy=msg.policy.clone(cte_type='8bit'))
+            email_bytes = msg.as_bytes()
 
             # --- Create final ZIP ---
             final_zip_buffer = io.BytesIO()
@@ -123,7 +121,7 @@ if uploaded_files:
             st.success("Processing complete!")
             
             st.download_button(
-                label="📥 Download ZIP (PDFs + Clean Email Draft)",
+                label="📥 Download ZIP (PDFs + Fixed Email Draft)",
                 data=final_zip_buffer.getvalue(),
                 file_name="hills_package.zip",
                 mime="application/zip",
@@ -138,4 +136,4 @@ else:
     st.info("Please upload PDF files to start.")
 
 st.divider()
-st.caption("Cleaned Encoding (8-bit HTML) | Outlook Draft Mode enabled")
+st.caption("Base64 Encoded Body | Outlook Draft Mode | Corrected Character Flow")
