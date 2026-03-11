@@ -5,7 +5,6 @@ import streamlit as st
 from pypdf import PdfReader, PdfWriter
 from email.message import EmailMessage
 from email.utils import formatdate
-from email.policy import SMTPUTF8
 
 # --- Helper function for filename sanitization ---
 def sanitize_name(filename: str) -> str:
@@ -19,7 +18,7 @@ st.set_page_config(page_title="🐶 Hill's CMR Extractor", page_icon="📄", lay
 st.title("🐶 Hill's CMR Extractor")
 st.write(
     "Upload PDF files. This tool extracts the first pages and creates an **editable Outlook draft** "
-    "with original files attached."
+    "without text encoding errors."
 )
 
 # --- File uploader ---
@@ -84,21 +83,27 @@ if uploaded_files:
                     skipped_files.append(f"{uploaded_file.name} (Error: {e})")
 
         if extracted_items:
-            # --- Generate Email Message with SMTPUTF8 Policy (Modern & Clean) ---
-            msg = EmailMessage(policy=SMTPUTF8)
+            # --- Generate Email Message using HTML and Base64 ---
+            msg = EmailMessage()
             msg["Subject"] = "Hill's Delivery Notes"
             msg["To"] = ""  
             msg["Date"] = formatdate(localtime=True)
             msg["X-Unsent"] = "1" 
             
-            body_text = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
+            # HTML body protects the text from being wrapped with '='
+            html_content = """
+            <html>
+            <body style="font-family: Calibri, sans-serif; font-size: 11pt;">
+                <p>Hello,</p>
+                <p>Please find the Hill's delivery notes attached, please assign them to the invoices accordingly.</p>
+            </body>
+            </html>
+            """
             
-            # We use a trick: bypass the automatic 'quoted-printable' by setting content 
-            # and explicitly choosing a binary-safe transfer encoding
-            msg.set_content(body_text)
-            
-            # This is the "kill switch" for the '=' signs
-            msg.replace_header('Content-Transfer-Encoding', '8bit')
+            # We add the content as HTML. EmailMessage automatically handles 
+            # safe encoding for HTML parts.
+            msg.set_content("Please use an HTML compatible email client.") # Fallback
+            msg.add_alternative(html_content, subtype='html')
 
             # Attachments
             for orig_name, orig_data in original_files_data:
@@ -109,8 +114,8 @@ if uploaded_files:
                     filename=orig_name
                 )
             
-            # We generate the bytes with a policy that FORBIDS line wrapping/folding
-            email_bytes = msg.as_bytes(policy=msg.policy.clone(max_line_length=0, cte_type='8bit'))
+            # Final output bytes
+            email_bytes = msg.as_bytes()
 
             # --- Create final ZIP ---
             final_zip_buffer = io.BytesIO()
@@ -122,7 +127,7 @@ if uploaded_files:
             st.success("Processing complete!")
             
             st.download_button(
-                label="📥 Download ZIP (PDFs + Fixed Email Draft)",
+                label="📥 Download ZIP (PDFs + Final Fixed Email)",
                 data=final_zip_buffer.getvalue(),
                 file_name="hills_package.zip",
                 mime="application/zip",
