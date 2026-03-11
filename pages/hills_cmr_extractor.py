@@ -18,7 +18,7 @@ st.set_page_config(page_title="🐶 Hill's CMR Extractor", page_icon="📄", lay
 st.title("🐶 Hill's CMR Extractor")
 st.write(
     "Upload PDF files. This tool extracts the first pages and creates an **editable Outlook draft** "
-    "without text encoding errors."
+    "with original files attached."
 )
 
 # --- File uploader ---
@@ -83,27 +83,28 @@ if uploaded_files:
                     skipped_files.append(f"{uploaded_file.name} (Error: {e})")
 
         if extracted_items:
-            # --- Generate Email Message using HTML and Base64 ---
+            # --- Generate Email Message ---
             msg = EmailMessage()
             msg["Subject"] = "Hill's Delivery Notes"
             msg["To"] = ""  
             msg["Date"] = formatdate(localtime=True)
             msg["X-Unsent"] = "1" 
             
-            # HTML body protects the text from being wrapped with '='
-            html_content = """
-            <html>
-            <body style="font-family: Calibri, sans-serif; font-size: 11pt;">
-                <p>Hello,</p>
-                <p>Please find the Hill's delivery notes attached, please assign them to the invoices accordingly.</p>
-            </body>
-            </html>
-            """
+            # Text body using a very specific content management
+            body_text = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
             
-            # We add the content as HTML. EmailMessage automatically handles 
-            # safe encoding for HTML parts.
-            msg.set_content("Please use an HTML compatible email client.") # Fallback
-            msg.add_alternative(html_content, subtype='html')
+            # Simple set_content, but we will force the CTE (Content-Transfer-Encoding) 
+            # to Base64 for the text part only, which is the ultimate way to avoid "=" signs.
+            msg.set_content(body_text)
+            
+            # Find the text part and force Base64 encoding manually for the part
+            for part in msg.walk():
+                if part.get_content_maintype() == 'text':
+                    # This avoids the previous ValueError by using set_param correctly
+                    part.replace_header('Content-Transfer-Encoding', 'base64')
+                    import base64
+                    encoded_body = base64.b64encode(body_text.encode('utf-8')).decode('ascii')
+                    part.set_payload(encoded_body)
 
             # Attachments
             for orig_name, orig_data in original_files_data:
@@ -114,7 +115,6 @@ if uploaded_files:
                     filename=orig_name
                 )
             
-            # Final output bytes
             email_bytes = msg.as_bytes()
 
             # --- Create final ZIP ---
@@ -127,7 +127,7 @@ if uploaded_files:
             st.success("Processing complete!")
             
             st.download_button(
-                label="📥 Download ZIP (PDFs + Final Fixed Email)",
+                label="📥 Download ZIP (Final Fix)",
                 data=final_zip_buffer.getvalue(),
                 file_name="hills_package.zip",
                 mime="application/zip",
