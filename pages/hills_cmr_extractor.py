@@ -5,7 +5,7 @@ import streamlit as st
 from pypdf import PdfReader, PdfWriter
 from email.message import EmailMessage
 from email.utils import formatdate
-from email import encoders
+from email import contentmanager
 
 # --- Helper function for filename sanitization ---
 def sanitize_name(filename: str) -> str:
@@ -84,23 +84,23 @@ if uploaded_files:
                     skipped_files.append(f"{uploaded_file.name} (Error: {e})")
 
         if extracted_items:
-            # --- Generate Robust Email Message ---
+            # --- Generate Email Message ---
             msg = EmailMessage()
             msg["Subject"] = "Hill's Delivery Notes"
             msg["To"] = ""  
             msg["Date"] = formatdate(localtime=True)
             msg["X-Unsent"] = "1" 
             
-            # The Text Body
             body_text = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
+            
+            # We set the content and then force the encoding to 8bit to avoid "=" signs
             msg.set_content(body_text)
             
-            # FORCE Base64 encoding for the body to prevent "ass=gn" issues
-            for part in msg.walk():
-                if part.get_content_maintype() == 'text':
-                    encoders.encode_base64(part)
+            # This logic avoids the "ValueError" by correctly managing headers
+            main_part = msg.get_body() if msg.is_multipart() else msg
+            main_part.replace_header('Content-Transfer-Encoding', '8bit')
 
-            # Attachments
+            # Attachments (Originals)
             for orig_name, orig_data in original_files_data:
                 msg.add_attachment(
                     orig_data,
@@ -109,7 +109,8 @@ if uploaded_files:
                     filename=orig_name
                 )
             
-            email_bytes = msg.as_bytes()
+            # Use a policy that supports 8bit to prevent re-encoding during output
+            email_bytes = msg.as_bytes(policy=msg.policy.clone(cte_type='8bit'))
 
             # --- Create final ZIP ---
             final_zip_buffer = io.BytesIO()
@@ -136,4 +137,4 @@ else:
     st.info("Please upload PDF files to start.")
 
 st.divider()
-st.caption("Base64 Encoded Body | Outlook Draft Mode | Corrected Character Flow")
+st.caption("Policy-based 8bit Encoding | Outlook Draft Mode | Character Fix Applied")
