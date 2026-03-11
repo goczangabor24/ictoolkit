@@ -17,6 +17,24 @@ def sanitize_name(filename: str) -> str:
 st.set_page_config(page_title="🐶 Hill's CMR Extractor", page_icon="📄", layout="centered")
 
 st.title("🐶 Hill's CMR Extractor")
+
+# --- Custom CSS to make the button green ---
+st.markdown("""
+    <style>
+    div.stButton > button {
+        background-color: #28a745 !important;
+        color: white !important;
+        border: none !important;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+    }
+    div.stButton > button:hover {
+        background-color: #218838 !important;
+        color: white !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.write(
     "Upload PDF files. This tool extracts the first pages and creates an **editable Outlook draft** "
     "with original files attached."
@@ -52,16 +70,14 @@ if uploaded_files:
     # --- Validation Logic ---
     empty_suffixes = [key for key, val in suffix_values.items() if not val.strip()]
     
-    col_btn1, col_btn2 = st.columns([1, 1])
-    
     start_processing = False
     
     if empty_suffixes:
         st.warning(f"⚠️ **Note:** {len(empty_suffixes)} suffix field(s) are empty. These files will use their original names.")
-        if st.button("🚀 Process Anyway", use_container_width=True, type="secondary"):
+        if st.button("🚀 Process Anyway", use_container_width=True):
             start_processing = True
     else:
-        if st.button("🚀 Process & Prepare ZIP", use_container_width=True, type="primary"):
+        if st.button("🚀 Process & Prepare ZIP", use_container_width=True):
             start_processing = True
 
     # --- Processing ---
@@ -110,14 +126,12 @@ if uploaded_files:
             body_text = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
             msg.set_content(body_text)
             
-            # Final fix for encoding
             for part in msg.walk():
                 if part.get_content_maintype() == 'text':
                     part.replace_header('Content-Transfer-Encoding', 'base64')
                     encoded_body = base64.b64encode(body_text.encode('utf-8')).decode('ascii')
                     part.set_payload(encoded_body)
 
-            # Attachments
             for orig_name, orig_data in original_files_data:
                 msg.add_attachment(
                     orig_data,
@@ -128,7 +142,6 @@ if uploaded_files:
             
             email_bytes = msg.as_bytes()
 
-            # --- Create final ZIP ---
             final_zip_buffer = io.BytesIO()
             with zipfile.ZipFile(final_zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr("hills_delivery_email.eml", email_bytes)
@@ -138,7 +151,7 @@ if uploaded_files:
             st.success("Processing complete!")
             
             st.download_button(
-                label="📥 Download ZIP Package",
+                label="📥 Download ZIP",
                 data=final_zip_buffer.getvalue(),
                 file_name="hills_package.zip",
                 mime="application/zip",
