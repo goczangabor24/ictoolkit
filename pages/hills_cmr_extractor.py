@@ -127,7 +127,7 @@ if uploaded_files:
             st.success("Processing complete!")
             
             st.download_button(
-                label="📥 Download ZIP (Final Fix)",
+                label="📥 Download ZIP",
                 data=final_zip_buffer.getvalue(),
                 file_name="hills_package.zip",
                 mime="application/zip",
@@ -140,3 +140,4 @@ if uploaded_files:
                 st.write(f"- {skip}")
 else:
     st.info("Please upload PDF files to start.")
+
