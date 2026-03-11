@@ -1,5 +1,6 @@
 import io
 import zipfile
+import base64
 from pathlib import Path
 import streamlit as st
 from pypdf import PdfReader, PdfWriter
@@ -34,7 +35,7 @@ if uploaded_files:
     st.subheader("Output filename suffixes")
     header_cols = st.columns([3, 2])
     header_cols[0].markdown("**Original PDF name**")
-    header_cols[1].markdown("**Suffix (optional)**")
+    header_cols[1].markdown("**Suffix (Required)**")
 
     for i, uploaded_file in enumerate(uploaded_files):
         clean_base = sanitize_name(uploaded_file.name)
@@ -43,12 +44,21 @@ if uploaded_files:
         cols = st.columns([3, 2])
         cols[0].text_input("Name", value=uploaded_file.name, disabled=True, key=f"name_{i}", label_visibility="collapsed")
         suffix_values[key] = cols[1].text_input(
-            "Suffix", value="", key=key, placeholder="e.g. _extract", label_visibility="collapsed"
+            "Suffix", value="", key=key, placeholder="e.g. _v1", label_visibility="collapsed"
         )
 
     st.divider()
 
+    # --- Processing with validation ---
     if st.button("🚀 Process & Prepare All-in-One ZIP", use_container_width=True):
+        # 1. Validation: Check if all suffix fields are filled
+        empty_suffixes = [key for key, val in suffix_values.items() if not val.strip()]
+        
+        if empty_suffixes:
+            st.error("⚠️ **Validation Error:** Please fill in all suffix fields before processing!")
+            st.stop()  # Stops execution here, won't generate the ZIP
+        
+        # 2. If validation passes, start processing
         extracted_items = []      
         original_files_data = []  
         skipped_files = []
@@ -83,26 +93,20 @@ if uploaded_files:
                     skipped_files.append(f"{uploaded_file.name} (Error: {e})")
 
         if extracted_items:
-            # --- Generate Email Message ---
+            # --- Generate Email Message (with Base64 fix) ---
             msg = EmailMessage()
             msg["Subject"] = "Hill's Delivery Notes"
             msg["To"] = ""  
             msg["Date"] = formatdate(localtime=True)
             msg["X-Unsent"] = "1" 
             
-            # Text body using a very specific content management
             body_text = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
-            
-            # Simple set_content, but we will force the CTE (Content-Transfer-Encoding) 
-            # to Base64 for the text part only, which is the ultimate way to avoid "=" signs.
             msg.set_content(body_text)
             
-            # Find the text part and force Base64 encoding manually for the part
+            # Force Base64 encoding for the text part to prevent "inv=oice" issues
             for part in msg.walk():
                 if part.get_content_maintype() == 'text':
-                    # This avoids the previous ValueError by using set_param correctly
                     part.replace_header('Content-Transfer-Encoding', 'base64')
-                    import base64
                     encoded_body = base64.b64encode(body_text.encode('utf-8')).decode('ascii')
                     part.set_payload(encoded_body)
 
@@ -140,4 +144,3 @@ if uploaded_files:
                 st.write(f"- {skip}")
 else:
     st.info("Please upload PDF files to start.")
-
