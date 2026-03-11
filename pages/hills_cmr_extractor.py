@@ -4,6 +4,7 @@ from pathlib import Path
 import streamlit as st
 from pypdf import PdfReader, PdfWriter
 from email.message import EmailMessage
+from email.utils import formatdate
 
 # --- Helper function for filename sanitization ---
 def sanitize_name(filename: str) -> str:
@@ -16,8 +17,8 @@ st.set_page_config(page_title="🐶 Hill's CMR Extractor", page_icon="📄", lay
 
 st.title("🐶 Hill's CMR Extractor")
 st.write(
-    "Upload PDF files. The app will extract the first pages into a ZIP file "
-    "and include an **editable** Outlook email draft with original files attached."
+    "Upload PDF files. This tool extracts the first pages and creates an **editable Outlook draft** "
+    "with original files attached."
 )
 
 # --- File uploader ---
@@ -47,7 +48,6 @@ if uploaded_files:
 
     st.divider()
 
-    # --- Processing ---
     if st.button("🚀 Process & Prepare All-in-One ZIP", use_container_width=True):
         extracted_items = []      
         original_files_data = []  
@@ -83,15 +83,24 @@ if uploaded_files:
                     skipped_files.append(f"{uploaded_file.name} (Error: {e})")
 
         if extracted_items:
-            # --- Generate EDITABLE Email Message ---
+            # --- Generate ROBUST Email Message ---
             msg = EmailMessage()
             msg["Subject"] = "Hill's Delivery Notes"
-            msg["To"] = ""  # You can add a default email here
-            # This header tells Outlook it's a draft
-            msg["X-Unsent"] = "1"
+            msg["To"] = ""  
+            msg["Date"] = formatdate(localtime=True)
+            msg["X-Unsent"] = "1" # Ensures Edit Mode in Outlook
             
-            body = "Hello,\n\nPlease find the Hill's delivery notes attached, please assign them to the invoices accordingly."
-            msg.set_content(body, charset='utf-8')
+            # Use HTML to force Outlook to render characters correctly
+            html_body = """
+            <html>
+            <body>
+                <p>Hello,</p>
+                <p>Please find the Hill's delivery notes attached, please assign them to the invoices accordingly.</p>
+            </body>
+            </html>
+            """
+            msg.set_content("Please open this email in an HTML-compatible viewer.") # Fallback text
+            msg.add_alternative(html_body, subtype='html')
 
             for orig_name, orig_data in original_files_data:
                 msg.add_attachment(
@@ -101,7 +110,7 @@ if uploaded_files:
                     filename=orig_name
                 )
             
-            # Use policy to ensure proper line endings and avoid "inv=ices" style encoding
+            # Export with policy that avoids the "=" signs (quoted-printable)
             email_bytes = msg.as_bytes(policy=msg.policy.clone(cte_type='8bit'))
 
             # --- Create final ZIP ---
@@ -114,7 +123,7 @@ if uploaded_files:
             st.success("Processing complete!")
             
             st.download_button(
-                label="📥 Download ZIP (PDFs + Editable Email)",
+                label="📥 Download ZIP (PDFs + Clean Email Draft)",
                 data=final_zip_buffer.getvalue(),
                 file_name="hills_package.zip",
                 mime="application/zip",
@@ -125,6 +134,8 @@ if uploaded_files:
             st.warning("Skipped files:")
             for skip in skipped_files:
                 st.write(f"- {skip}")
-
 else:
     st.info("Please upload PDF files to start.")
+
+st.divider()
+st.caption("Cleaned Encoding (8-bit HTML) | Outlook Draft Mode enabled")
