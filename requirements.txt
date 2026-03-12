@@ -3,3 +3,6 @@ pandas
 pypdf
 PyPDF2
 pymupdf
+openai
+pdfplumber
+openpyxl
