@@ -78,8 +78,8 @@ def parse_eu_number(value) -> Optional[float]:
     s = s.replace("€", "")
     s = re.sub(r"\bEUR\b", "", s, flags=re.IGNORECASE)
     s = s.strip().replace(" ", "")
-
     s = re.sub(r"[^0-9,.\-]", "", s)
+
     if not s:
         return None
 
@@ -138,10 +138,9 @@ def normalize_european_number(value: str) -> str:
         if s.rfind(",") > s.rfind("."):
             s = s.replace(".", "")
             return s
-        else:
-            s = s.replace(",", "")
-            s = s.replace(".", ",")
-            return s
+        s = s.replace(",", "")
+        s = s.replace(".", ",")
+        return s
 
     if "," in s:
         parts = s.split(",")
@@ -210,6 +209,26 @@ def map_matched_on(formula: str) -> str:
     if formula in ("G", "D*G"):
         return "Discounted Price"
     return ""
+
+
+def highlight_comparison_rows(row):
+    no_match = not bool(row.get("_found", False))
+    ref_num = pd.to_numeric(pd.Series([row.get("_ref_num")]), errors="coerce").iloc[0]
+    closest_num = pd.to_numeric(pd.Series([row.get("_closest_num")]), errors="coerce").iloc[0]
+
+    if no_match:
+        return ["background-color: #ffefef"] * len(row)
+
+    if pd.isna(ref_num) or pd.isna(closest_num):
+        return [""] * len(row)
+
+    if ref_num > closest_num:
+        return ["background-color: #ffefef"] * len(row)
+
+    if ref_num < closest_num:
+        return ["background-color: #effbef"] * len(row)
+
+    return [""] * len(row)
 
 
 # ---------------------------
@@ -661,26 +680,6 @@ def build_results(main_df: pd.DataFrame, ref_df: pd.DataFrame, tolerance: float)
     return pd.DataFrame(results)
 
 
-def highlight_comparison_rows(row):
-    no_match = not bool(row.get("_found", False))
-    ref_num = pd.to_numeric(pd.Series([row.get("_ref_num")]), errors="coerce").iloc[0]
-    closest_num = pd.to_numeric(pd.Series([row.get("_closest_num")]), errors="coerce").iloc[0]
-
-    if no_match:
-        return ["background-color: #ffefef"] * len(row)
-
-    if pd.isna(ref_num) or pd.isna(closest_num):
-        return [""] * len(row)
-
-    if ref_num > closest_num:
-        return ["background-color: #ffefef"] * len(row)
-
-    if ref_num < closest_num:
-        return ["background-color: #effbef"] * len(row)
-
-    return [""] * len(row)
-
-
 # ---------------------------
 # UI
 # ---------------------------
@@ -802,9 +801,8 @@ if run:
         )
 
         main_df = read_main_table(main_file)
-                result_df = build_results(main_df, reference_df, tolerance=tolerance)
+        result_df = build_results(main_df, reference_df, tolerance=tolerance)
 
-        # force helper columns to real numeric/boolean-friendly pandas types
         result_df["_ref_num"] = pd.to_numeric(result_df["_ref_num"], errors="coerce")
         result_df["_closest_num"] = pd.to_numeric(result_df["_closest_num"], errors="coerce")
         result_df["_found"] = result_df["_found"].fillna(False)
@@ -842,6 +840,6 @@ if run:
             ticket_styled = ticket_df.style.apply(highlight_comparison_rows, axis=1)
             ticket_styled = ticket_styled.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
             st.dataframe(ticket_styled, use_container_width=True)
+
     except Exception as e:
         st.error(str(e))
-
