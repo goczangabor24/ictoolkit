@@ -34,10 +34,14 @@ st.markdown(
         background-color: #218838;
         color: white;
     }
+    div.stButton > button:focus,
+    div.stButton > button:focus-visible,
     div.stButton > button:focus:not(:active) {
+        background-color: #8fdaa0;
         color: white;
         border: none;
-        box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25);
+        outline: none;
+        box-shadow: 0 0 0 0.2rem rgba(143, 218, 160, 0.45);
     }
     </style>
     """,
@@ -99,7 +103,7 @@ def parse_eu_number(value) -> Optional[float]:
             if len(decimal_part) in (1, 2, 3):
                 s = f"{int_part}.{decimal_part}"
             else:
-                s = "".join(parts)
+                s = s.replace(".", "")
 
     try:
         return float(s)
@@ -198,6 +202,14 @@ def looks_numeric_column(column_name: str) -> bool:
         "unit",
     ]
     return any(keyword in name for keyword in numeric_keywords)
+
+
+def map_matched_on(formula: str) -> str:
+    if formula in ("F", "D*F"):
+        return "List Price"
+    if formula in ("G", "D*G"):
+        return "Discounted Price"
+    return ""
 
 
 # ---------------------------
@@ -577,33 +589,25 @@ def build_results(main_df: pd.DataFrame, ref_df: pd.DataFrame, tolerance: float)
             results.append({
                 "reference_code": ref_code,
                 "reference_value": str(ref_value_raw),
-                "found": "No",
-                "found_in": "",
                 "exact_match": "",
-                "matched_formula": "",
-                "closest_formula": "",
+                "matched_on": "",
                 "closest_value": "",
                 "difference": "",
-                "A_value": "",
-                "B_value": "",
-                "D_value": "",
-                "F_value": "",
-                "G_value": "",
+                "LA#": "",
+                "Supplier ID": "",
+                "Quantity": "",
+                "list_price": "",
+                "discounted_price": "",
+                "_found": False,
+                "_ref_num": ref_value_num,
+                "_closest_num": None,
             })
             continue
 
         best_row_result = None
         best_main_row = None
-        best_found_in = ""
 
         for _, main_row in matches.iterrows():
-            found_in_list = []
-            if normalize_code(main_row["_A_code"]) == ref_code:
-                found_in_list.append("A")
-            if normalize_code(main_row["_B_code"]) == ref_code:
-                found_in_list.append("B")
-            found_in = "/".join(found_in_list)
-
             if ref_value_num is None:
                 comparison = {
                     "exact": False,
@@ -625,7 +629,6 @@ def build_results(main_df: pd.DataFrame, ref_df: pd.DataFrame, tolerance: float)
             if best_row_result is None:
                 best_row_result = comparison
                 best_main_row = main_row
-                best_found_in = found_in
             else:
                 current_diff = comparison["difference"]
                 best_diff = best_row_result["difference"]
@@ -633,38 +636,48 @@ def build_results(main_df: pd.DataFrame, ref_df: pd.DataFrame, tolerance: float)
                 if comparison["exact"] and not best_row_result["exact"]:
                     best_row_result = comparison
                     best_main_row = main_row
-                    best_found_in = found_in
                 elif comparison["exact"] == best_row_result["exact"]:
                     if current_diff is not None and best_diff is not None and current_diff < best_diff:
                         best_row_result = comparison
                         best_main_row = main_row
-                        best_found_in = found_in
 
         results.append({
             "reference_code": ref_code,
             "reference_value": str(ref_value_raw),
-            "found": "Yes",
-            "found_in": best_found_in,
             "exact_match": "✓" if best_row_result["exact"] else "",
-            "matched_formula": best_row_result["exact_formula"],
-            "closest_formula": best_row_result["closest_formula"],
+            "matched_on": map_matched_on(best_row_result["closest_formula"]),
             "closest_value": format_eu_number(best_row_result["closest_value"]),
             "difference": format_eu_number(best_row_result["difference"]) if best_row_result["difference"] is not None else "",
-            "A_value": normalize_code(best_main_row[col_a]),
-            "B_value": normalize_code(best_main_row[col_b]),
-            "D_value": format_eu_number(best_main_row["_D_num"]) if best_main_row["_D_num"] is not None else "",
-            "F_value": format_eu_number(best_main_row["_F_num"]) if best_main_row["_F_num"] is not None else "",
-            "G_value": format_eu_number(best_main_row["_G_num"]) if best_main_row["_G_num"] is not None else "",
+            "LA#": normalize_code(best_main_row[col_a]),
+            "Supplier ID": normalize_code(best_main_row[col_b]),
+            "Quantity": format_eu_number(best_main_row["_D_num"]) if best_main_row["_D_num"] is not None else "",
+            "list_price": format_eu_number(best_main_row["_F_num"]) if best_main_row["_F_num"] is not None else "",
+            "discounted_price": format_eu_number(best_main_row["_G_num"]) if best_main_row["_G_num"] is not None else "",
+            "_found": True,
+            "_ref_num": ref_value_num,
+            "_closest_num": best_row_result["closest_value"],
         })
 
     return pd.DataFrame(results)
 
 
-def highlight_problem_rows(row):
-    if row["found"] == "No":
+def highlight_comparison_rows(row):
+    no_match = not bool(row.get("_found", False))
+    ref_num = row.get("_ref_num")
+    closest_num = row.get("_closest_num")
+
+    if no_match:
         return ["background-color: #ffefef"] * len(row)
-    if row["exact_match"] != "✓":
+
+    if ref_num is None or closest_num is None:
+        return [""] * len(row)
+
+    if ref_num > closest_num:
         return ["background-color: #ffefef"] * len(row)
+
+    if ref_num < closest_num:
+        return ["background-color: #effbef"] * len(row)
+
     return [""] * len(row)
 
 
@@ -686,8 +699,9 @@ with st.sidebar:
     tolerance = st.number_input(
         "Matching tolerance",
         min_value=0.0,
-        value=0.01,
+        value=0.00,
         step=0.01,
+        format="%.2f",
         help="Two values are treated as equal if their difference is within this tolerance."
     )
 
@@ -790,9 +804,43 @@ if run:
         main_df = read_main_table(main_file)
         result_df = build_results(main_df, reference_df, tolerance=tolerance)
 
+        visible_columns = [
+            "reference_code",
+            "reference_value",
+            "exact_match",
+            "matched_on",
+            "closest_value",
+            "difference",
+            "LA#",
+            "Supplier ID",
+            "Quantity",
+            "list_price",
+            "discounted_price",
+        ]
+
         st.markdown("### Match result")
-        styled_result = result_df.style.apply(highlight_problem_rows, axis=1)
+        styled_result = result_df[visible_columns].style.apply(
+            lambda _: [""] * len(visible_columns),
+            axis=1
+        )
+
+        styled_result = result_df.style.apply(highlight_comparison_rows, axis=1)
+        styled_result = styled_result.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
         st.dataframe(styled_result, use_container_width=True)
+
+        ticket_df = result_df[
+            (result_df["_found"] == True) &
+            (result_df["_ref_num"].notna()) &
+            (result_df["_closest_num"].notna()) &
+            (result_df["_ref_num"] > result_df["_closest_num"])
+        ].copy()
+
+        if not ticket_df.empty:
+            st.markdown("### Please open a ticket for the following price differences:")
+            ticket_visible = ticket_df[visible_columns]
+            ticket_styled = ticket_df.style.apply(highlight_comparison_rows, axis=1)
+            ticket_styled = ticket_styled.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
+            st.dataframe(ticket_styled, use_container_width=True)
 
     except Exception as e:
         st.error(str(e))
