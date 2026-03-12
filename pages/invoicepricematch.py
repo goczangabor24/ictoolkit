@@ -663,13 +663,13 @@ def build_results(main_df: pd.DataFrame, ref_df: pd.DataFrame, tolerance: float)
 
 def highlight_comparison_rows(row):
     no_match = not bool(row.get("_found", False))
-    ref_num = row.get("_ref_num")
-    closest_num = row.get("_closest_num")
+    ref_num = pd.to_numeric(pd.Series([row.get("_ref_num")]), errors="coerce").iloc[0]
+    closest_num = pd.to_numeric(pd.Series([row.get("_closest_num")]), errors="coerce").iloc[0]
 
     if no_match:
         return ["background-color: #ffefef"] * len(row)
 
-    if ref_num is None or closest_num is None:
+    if pd.isna(ref_num) or pd.isna(closest_num):
         return [""] * len(row)
 
     if ref_num > closest_num:
@@ -802,7 +802,12 @@ if run:
         )
 
         main_df = read_main_table(main_file)
-        result_df = build_results(main_df, reference_df, tolerance=tolerance)
+                result_df = build_results(main_df, reference_df, tolerance=tolerance)
+
+        # force helper columns to real numeric/boolean-friendly pandas types
+        result_df["_ref_num"] = pd.to_numeric(result_df["_ref_num"], errors="coerce")
+        result_df["_closest_num"] = pd.to_numeric(result_df["_closest_num"], errors="coerce")
+        result_df["_found"] = result_df["_found"].fillna(False)
 
         visible_columns = [
             "reference_code",
@@ -819,28 +824,24 @@ if run:
         ]
 
         st.markdown("### Match result")
-        styled_result = result_df[visible_columns].style.apply(
-            lambda _: [""] * len(visible_columns),
-            axis=1
-        )
-
         styled_result = result_df.style.apply(highlight_comparison_rows, axis=1)
         styled_result = styled_result.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
         st.dataframe(styled_result, use_container_width=True)
 
-        ticket_df = result_df[
-            (result_df["_found"] == True) &
-            (result_df["_ref_num"].notna()) &
-            (result_df["_closest_num"].notna()) &
-            (result_df["_ref_num"] > result_df["_closest_num"])
-        ].copy()
+        ticket_mask = (
+            result_df["_found"].eq(True)
+            & result_df["_ref_num"].notna()
+            & result_df["_closest_num"].notna()
+            & (result_df["_ref_num"] > result_df["_closest_num"])
+        )
+
+        ticket_df = result_df.loc[ticket_mask].copy()
 
         if not ticket_df.empty:
             st.markdown("### Please open a ticket for the following price differences:")
-            ticket_visible = ticket_df[visible_columns]
             ticket_styled = ticket_df.style.apply(highlight_comparison_rows, axis=1)
             ticket_styled = ticket_styled.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
             st.dataframe(ticket_styled, use_container_width=True)
-
     except Exception as e:
         st.error(str(e))
+
