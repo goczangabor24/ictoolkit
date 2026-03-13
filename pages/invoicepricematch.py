@@ -9,6 +9,7 @@ import fitz  # PyMuPDF
 import pandas as pd
 import pdfplumber
 import streamlit as st
+import streamlit.components.v1 as components
 from openai import OpenAI
 
 
@@ -231,6 +232,38 @@ def highlight_comparison_rows(row):
     return [""] * len(row)
 
 
+def dataframe_to_tsv_without_headers(df: pd.DataFrame) -> str:
+    return df.to_csv(sep="\t", index=False, header=False)
+
+
+def render_copy_button(text_to_copy: str, button_label: str = "Copy to clipboard") -> None:
+    escaped = json.dumps(text_to_copy)
+    html = f"""
+    <div style="margin-top: 0.5rem; margin-bottom: 1rem;">
+      <button
+        onclick='navigator.clipboard.writeText({escaped}).then(() => {{
+            const msg = document.getElementById("copy-msg");
+            msg.innerText = "Copied to clipboard";
+            setTimeout(() => msg.innerText = "", 2000);
+        }});'
+        style="
+          background-color:#28a745;
+          color:white;
+          border:none;
+          border-radius:8px;
+          padding:0.6rem 1.2rem;
+          font-weight:600;
+          cursor:pointer;
+        "
+      >
+        {button_label}
+      </button>
+      <span id="copy-msg" style="margin-left: 12px; color: #28a745; font-weight: 600;"></span>
+    </div>
+    """
+    components.html(html, height=60)
+
+
 # ---------------------------
 # Part 1: PDF extraction
 # ---------------------------
@@ -314,10 +347,10 @@ Source filename:
 {filename}
 
 PDF text:
-{text[:25000]}
+{text[:8000]}
 
 Extracted table preview:
-{table_preview[:20000]}
+{table_preview[:6000]}
 """.strip()
 
 
@@ -504,6 +537,43 @@ def read_main_table(uploaded_file) -> pd.DataFrame:
     raise ValueError(f"Could not read main file. Last error: {last_error}")
 
 
+def read_orders_last_90_days(uploaded_file) -> pd.DataFrame:
+    name = uploaded_file.name.lower()
+
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        return pd.read_excel(uploaded_file)
+
+    raw = uploaded_file.read()
+
+    attempts = [
+        {"encoding": "utf-16", "sep": "\t"},
+        {"encoding": "utf-8", "sep": "\t"},
+        {"encoding": "utf-8-sig", "sep": "\t"},
+        {"encoding": "latin1", "sep": "\t"},
+        {"encoding": "utf-16", "sep": ","},
+        {"encoding": "utf-8", "sep": ","},
+        {"encoding": "utf-8-sig", "sep": ","},
+        {"encoding": "latin1", "sep": ","},
+        {"encoding": "utf-16", "sep": ";"},
+        {"encoding": "utf-8", "sep": ";"},
+        {"encoding": "utf-8-sig", "sep": ";"},
+        {"encoding": "latin1", "sep": ";"},
+    ]
+
+    last_error = None
+    for attempt in attempts:
+        try:
+            return pd.read_csv(
+                io.BytesIO(raw),
+                encoding=attempt["encoding"],
+                sep=attempt["sep"]
+            )
+        except Exception as e:
+            last_error = e
+
+    raise ValueError(f"Could not read Orders last 90 days file. Last error: {last_error}")
+
+
 def find_best_match(
     target: float,
     d: Optional[float],
@@ -680,6 +750,55 @@ def build_results(main_df: pd.DataFrame, ref_df: pd.DataFrame, tolerance: float)
     return pd.DataFrame(results)
 
 
+def build_jira_autofill_df(
+    orders_df: pd.DataFrame,
+    ticket_df: pd.DataFrame,
+    result_df: pd.DataFrame
+) -> pd.DataFrame:
+    if orders_df.empty:
+        raise ValueError("The Orders last 90 days file is empty.")
+
+    if orders_df.shape[1] < 5:
+        raise ValueError("The Orders last 90 days file must contain at least 5 columns so A, B and E are available.")
+
+    first_row = orders_df.iloc[0]
+
+    purchase_order = "" if pd.isna(first_row.iloc[0]) else str(first_row.iloc[0]).strip()
+    supplier_1 = "" if pd.isna(first_row.iloc[1]) else str(first_row.iloc[1]).strip()
+    shipping_fc = "" if pd.isna(first_row.iloc[4]) else str(first_row.iloc[4]).strip()
+
+    purchasing_org = "Matina GmbH" if "matina" in supplier_1.lower() else "zooplus AG"
+
+    if result_df["exact_match"].fillna("").eq("✓").sum() == 0:
+        la_amount = "Whole invoice"
+    elif len(ticket_df) == 1:
+        la_amount = "Single LA"
+    else:
+        la_amount = "Multiple LA"
+
+    la_values = [str(v).strip() for v in ticket_df["LA#"].fillna("").tolist() if str(v).strip()]
+    la_joined = ", ".join(la_values)
+
+    pd_in_favor_or_loss = "PD - Loss"
+
+    jira_df = pd.DataFrame(
+        [
+            {
+                "Shipping FC": shipping_fc,
+                "Purchase Order": purchase_order,
+                "Purchasing Organization": purchasing_org,
+                "Category": "Wrong Price Supplier",
+                "Supplier 1": supplier_1,
+                "LA Amount": la_amount,
+                "LA": la_joined,
+                "PD: In favor or loss": pd_in_favor_or_loss,
+            }
+        ]
+    )
+
+    return jira_df
+
+
 # ---------------------------
 # UI
 # ---------------------------
@@ -693,7 +812,7 @@ with st.sidebar:
         "Max pages for scanned PDF fallback",
         min_value=1,
         max_value=20,
-        value=8
+        value=3
     )
     tolerance = st.number_input(
         "Matching tolerance",
@@ -727,6 +846,9 @@ columns_input = st.text_area(
     height=100,
     placeholder="Example:\nitem code\nunit price w/o VAT",
 )
+
+if "price_check_ready" not in st.session_state:
+    st.session_state.price_check_ready = False
 
 run = st.button("Price check", type="primary")
 
@@ -807,25 +929,6 @@ if run:
         result_df["_closest_num"] = pd.to_numeric(result_df["_closest_num"], errors="coerce")
         result_df["_found"] = result_df["_found"].fillna(False)
 
-        visible_columns = [
-            "reference_code",
-            "reference_value",
-            "exact_match",
-            "matched_on",
-            "closest_value",
-            "difference",
-            "LA#",
-            "Supplier ID",
-            "Quantity",
-            "list_price",
-            "discounted_price",
-        ]
-
-        st.markdown("### Match result")
-        styled_result = result_df.style.apply(highlight_comparison_rows, axis=1)
-        styled_result = styled_result.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
-        st.dataframe(styled_result, use_container_width=True)
-
         ticket_mask = (
             result_df["_found"].eq(True)
             & result_df["_ref_num"].notna()
@@ -835,11 +938,108 @@ if run:
 
         ticket_df = result_df.loc[ticket_mask].copy()
 
-        if not ticket_df.empty:
-            st.markdown("### Please open a ticket for the following price differences:")
-            ticket_styled = ticket_df.style.apply(highlight_comparison_rows, axis=1)
-            ticket_styled = ticket_styled.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
-            st.dataframe(ticket_styled, use_container_width=True)
+        st.session_state.price_check_ready = True
+        st.session_state.price_check_result_df = result_df
+        st.session_state.price_check_ticket_df = ticket_df
 
     except Exception as e:
+        st.session_state.price_check_ready = False
         st.error(str(e))
+
+if st.session_state.price_check_ready:
+    result_df = st.session_state.price_check_result_df
+    ticket_df = st.session_state.price_check_ticket_df
+
+    visible_columns = [
+        "reference_code",
+        "reference_value",
+        "exact_match",
+        "matched_on",
+        "closest_value",
+        "difference",
+        "LA#",
+        "Supplier ID",
+        "Quantity",
+        "list_price",
+        "discounted_price",
+    ]
+
+    st.markdown("### Match result")
+    styled_result = result_df.style.apply(highlight_comparison_rows, axis=1)
+    styled_result = styled_result.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
+    st.dataframe(styled_result, use_container_width=True)
+
+    if not ticket_df.empty:
+        st.markdown("### Please open a ticket for the following price differences:")
+        ticket_styled = ticket_df.style.apply(highlight_comparison_rows, axis=1)
+        ticket_styled = ticket_styled.hide(axis="columns", subset=["_found", "_ref_num", "_closest_num"])
+        st.dataframe(ticket_styled, use_container_width=True)
+
+        st.markdown("### Please upload the Orders last 90 days table")
+        orders_last_90_file = st.file_uploader(
+            "Orders last 90 days table",
+            type=["csv", "tsv", "txt", "xlsx", "xls"],
+            accept_multiple_files=False,
+            key="orders_last_90_file"
+        )
+
+        if orders_last_90_file is not None:
+            try:
+                orders_last_90_df = read_orders_last_90_days(orders_last_90_file)
+
+                jira_autofill_df = build_jira_autofill_df(
+                    orders_df=orders_last_90_df,
+                    ticket_df=ticket_df,
+                    result_df=result_df,
+                )
+                first_row = orders_last_90_df.iloc[0]
+
+                supplier_value = "" if pd.isna(first_row.iloc[1]) else str(first_row.iloc[1]).strip()
+                issue_type = "Matina" if "matina" in supplier_value.lower() else "Zooplus"
+                
+                vendor_manager = "" if pd.isna(first_row.iloc[2]) else str(first_row.iloc[2]).strip()
+                
+                if issue_type == "Matina":
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background-color:#fff3cd;
+                            border:1px solid #ffe69c;
+                            color:#664d03;
+                            padding:16px;
+                            border-radius:10px;
+                            font-size:22px;
+                            font-weight:600;
+                            margin-bottom:12px;
+                        ">
+                            Don't forget to select Issue Type: {issue_type}<br>
+                            Vendor manager: {vendor_manager}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"""
+                        <div style="
+                            font-size:24px;
+                            font-weight:600;
+                        ">
+                            Vendor manager: {vendor_manager}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                st.markdown("### JIRA Ticket Autofill")
+                edited_jira_df = st.data_editor(
+                    jira_autofill_df,
+                    use_container_width=True,
+                    num_rows="fixed",
+                    key="jira_autofill_editor"
+                )
+
+                clipboard_text = dataframe_to_tsv_without_headers(edited_jira_df)
+                render_copy_button(clipboard_text, "Copy JIRA autofill to clipboard")
+            except Exception as e:
+                st.error(str(e))
